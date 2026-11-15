@@ -20,11 +20,20 @@ jobs:
         with:
           gradle-version: '8.7'
 
+      - name: Préparer la structure Android
+        run: |
+          mkdir -p proj/app/src/main/java/com/kouame/appelpredictions
+          cp ./*.java proj/app/src/main/java/com/kouame/appelpredictions/
+          cp AndroidManifest.xml proj/app/src/main/AndroidManifest.xml
+          cp app.gradle proj/app/build.gradle
+          cp build.gradle settings.gradle gradle.properties proj/
+
       - name: Compiler
+        working-directory: proj
         run: gradle assembleDebug --no-daemon --stacktrace
 
       - name: Publier l'APK
         uses: actions/upload-artifact@v4
         with:
           name: AppelPredictions-apk
-          path: build/outputs/apk/debug/*.apk
+          path: proj/app/build/outputs/apk/debug/*.apk
