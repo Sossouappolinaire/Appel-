@@ -43,8 +43,10 @@ public class MainActivity extends Activity {
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final List<ValueAnimator> animators = new ArrayList<>();
-    private EditText urlField;
-    private EditText keyField;
+    private final GradientDrawable dotMain = new GradientDrawable();
+    private final GradientDrawable dotBackup = new GradientDrawable();
+    private TextView stateMain;
+    private TextView stateBackup;
 
     private GradientDrawable dotBg;
     private TextView statusTitle;
@@ -91,28 +93,21 @@ public class MainActivity extends Activity {
         return c;
     }
 
-    private EditText field(String value, boolean multi) {
-        EditText e = new EditText(this);
-        final GradientDrawable g = UI.shape(this, 0xFF0F172A, 12);
-        g.setStroke(dp(1), 0xFF334155);
-        e.setBackground(g);
-        e.setPadding(dp(14), dp(12), dp(14), dp(12));
-        e.setTextColor(Color.WHITE);
-        e.setHintTextColor(0xFF64748B);
-        e.setTextSize(14);
-        e.setText(value);
-        if (multi) {
-            e.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
-            e.setMinLines(2);
-        } else {
-            e.setSingleLine(true);
-            e.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
-        }
-        e.setOnFocusChangeListener((v, focused) -> g.setStroke(dp(focused ? 2 : 1), focused ? 0xFF38BDF8 : 0xFF334155));
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        lp.topMargin = dp(6);
-        e.setLayoutParams(lp);
-        return e;
+    private LinearLayout baseRow(String name, GradientDrawable dot, TextView state) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(0, dp(12), 0, 0);
+        dot.setShape(GradientDrawable.OVAL);
+        dot.setColor(GREY);
+        View d = new View(this);
+        d.setBackground(dot);
+        LinearLayout.LayoutParams dl = new LinearLayout.LayoutParams(dp(10), dp(10));
+        dl.rightMargin = dp(10);
+        row.addView(d, dl);
+        row.addView(text(name, 14, Color.WHITE, false), new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        row.addView(state);
+        return row;
     }
 
     private Button button(String t, int c1, int c2) {
@@ -227,19 +222,16 @@ public class MainActivity extends Activity {
         root.addView(status);
         blocks.add(status);
 
-        // ----- Carte de connexion -----
+        // ----- Carte des bases de données (aucune clé affichée ici) -----
         LinearLayout conn = card();
-        conn.addView(text("🔗  Connexion Supabase", 15, Color.WHITE, true));
-        TextView l1 = text("Adresse du projet", 12, GREY, false);
-        l1.setPadding(0, dp(12), 0, 0);
-        conn.addView(l1);
-        urlField = field(Prefs.url(this), false);
-        conn.addView(urlField);
-        TextView l2 = text("Clé publique (anon / publishable)", 12, GREY, false);
-        l2.setPadding(0, dp(12), 0, 0);
-        conn.addView(l2);
-        keyField = field(Prefs.key(this), true);
-        conn.addView(keyField);
+        conn.addView(text("🗄️  Bases de données", 15, Color.WHITE, true));
+        stateMain = text("", 13, GREY, true);
+        stateBackup = text("", 13, GREY, true);
+        conn.addView(baseRow("Base principale", dotMain, stateMain));
+        conn.addView(baseRow("Base de secours", dotBackup, stateBackup));
+        TextView note = text("Si la base principale ne répond plus, l'application passe toute seule sur la base de secours. Les clés sont cachées : voir « Paramètres ».", 12, 0xFF64748B, false);
+        note.setPadding(0, dp(12), 0, 0);
+        conn.addView(note);
         root.addView(conn);
         blocks.add(conn);
 
@@ -267,6 +259,8 @@ public class MainActivity extends Activity {
         Button perm = button("⚙️  Autorisations (plein écran, batterie)", 0xFFA855F7, 0xFF7C3AED);
         actions.addView(test, full());
         actions.addView(testConn, full());
+        Button settings = button("⚙️  Paramètres (bases et clés)", 0xFF0EA5E9, 0xFF2563EB);
+        actions.addView(settings, full());
         actions.addView(perm, full());
         root.addView(actions);
         blocks.add(actions);
@@ -284,6 +278,7 @@ public class MainActivity extends Activity {
         });
         testConn.setOnClickListener(v -> testConnection(testConn));
         perm.setOnClickListener(v -> openPermissions());
+        settings.setOnClickListener(v -> startActivity(new Intent(this, SettingsActivity.class)));
 
         setContentView(scroll);
         refreshStatus();
@@ -324,13 +319,36 @@ public class MainActivity extends Activity {
         statusTitle.setTextColor(color == GREY ? Color.WHITE : color);
         statusDetail.setText(detail);
 
-        boolean configured = urlField.getText().toString().trim().startsWith("https://") && keyField.getText().toString().trim().length() >= 20;
+        boolean configured = Prefs.hasBase(this, 0) || Prefs.hasBase(this, 1);
         int progress = ok ? 100 : (running && !err ? 67 : (configured ? 34 : 8));
         stepBar.setProgress(progress, true);
         step1.setTextColor(progress >= 34 ? CYAN : 0xFF64748B);
         step2.setTextColor(progress >= 67 ? CYAN : 0xFF64748B);
         step3.setTextColor(progress >= 100 ? GREEN : 0xFF64748B);
         activityBar.setVisibility(running && !err ? View.VISIBLE : View.GONE);
+
+        int act = Prefs.active(this);
+        showBase(dotMain, stateMain, Prefs.hasBase(this, 0), running && act == 0, ok, err);
+        showBase(dotBackup, stateBackup, Prefs.hasBase(this, 1), running && act == 1, ok, err);
+    }
+
+    private void showBase(GradientDrawable dot, TextView state, boolean configured, boolean active, boolean ok, boolean err) {
+        int color;
+        String label;
+        if (!configured) {
+            color = GREY;
+            label = "Non configurée";
+        } else if (active) {
+            if (err) { color = RED; label = "Problème"; }
+            else if (ok) { color = GREEN; label = "Active"; }
+            else { color = ORANGE; label = "Connexion…"; }
+        } else {
+            color = CYAN;
+            label = "Surveillée";
+        }
+        dot.setColor(color);
+        state.setText(label);
+        state.setTextColor(color);
     }
 
     private void startAnimations() {
@@ -347,13 +365,10 @@ public class MainActivity extends Activity {
     }
 
     private void startWatching() {
-        String url = urlField.getText().toString().trim();
-        String key = keyField.getText().toString().trim();
-        if (!url.startsWith("https://") || key.length() < 20) {
-            Toast.makeText(this, "Renseigne l'adresse (https://…) et la clé publique.", Toast.LENGTH_LONG).show();
+        if (!Prefs.hasBase(this, 0) && !Prefs.hasBase(this, 1)) {
+            Toast.makeText(this, "Renseigne une base dans Paramètres (adresse https://… et clé publique).", Toast.LENGTH_LONG).show();
             return;
         }
-        if (!url.equals(Prefs.url(this)) || !key.equals(Prefs.key(this))) Prefs.setConnection(this, url, key);
         Prefs.setRunning(this, true);
         Prefs.setStatus(this, "Démarrage…");
         refreshStatus();
@@ -370,23 +385,29 @@ public class MainActivity extends Activity {
     }
 
     private void testConnection(final Button button) {
-        final String url = urlField.getText().toString().trim();
-        final String key = keyField.getText().toString().trim();
         final CharSequence original = button.getText();
         button.setEnabled(false);
         button.setAlpha(0.6f);
         button.setText("⏳  Test en cours…");
         new Thread(() -> {
-            Api.Result r = Api.get(url, key, "/rest/v1/apk_calls?select=id&order=id.desc&limit=1");
-            String p = Api.problem(r);
-            String msg;
-            if (p != null) msg = p;
-            else {
-                int n = 0;
-                try { n = new JSONArray(r.body).length(); } catch (Exception ignored) { }
-                msg = "Connexion réussie ✅ (table « apk_calls » lisible" + (n > 0 ? ", des appels existent" : ", aucun appel pour l'instant") + ").";
+            StringBuilder sb = new StringBuilder();
+            for (int w = 0; w < 2; w++) {
+                String name = w == 0 ? "Principale : " : "Secours : ";
+                if (!Prefs.hasBase(this, w)) {
+                    sb.append(name).append("non configurée\n");
+                    continue;
+                }
+                Api.Result r = Api.get(Prefs.url(this, w), Prefs.key(this, w), "/rest/v1/apk_calls?select=id&order=id.desc&limit=1");
+                String p = Api.problem(r);
+                if (p != null) {
+                    sb.append(name).append("❌ ").append(p).append("\n");
+                } else {
+                    int n = 0;
+                    try { n = new JSONArray(r.body).length(); } catch (Exception ignored) { }
+                    sb.append(name).append("✅ OK").append(n > 0 ? "" : " (aucun appel pour l'instant)").append("\n");
+                }
             }
-            final String shown = msg;
+            final String shown = sb.toString().trim();
             handler.post(() -> {
                 button.setEnabled(true);
                 button.setAlpha(1f);

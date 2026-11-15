@@ -4,6 +4,7 @@ import android.animation.ValueAnimator;
 import android.content.Context;
 import android.content.res.ColorStateList;
 import android.graphics.Color;
+import android.graphics.Typeface;
 import android.graphics.drawable.ClipDrawable;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
@@ -13,8 +14,11 @@ import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.animation.DecelerateInterpolator;
+import android.widget.Button;
 import android.widget.FrameLayout;
+import android.widget.LinearLayout;
 import android.widget.ProgressBar;
+import android.widget.TextView;
 
 import java.util.List;
 
@@ -173,5 +177,45 @@ final class UI {
         p.setIndeterminate(true);
         p.setIndeterminateTintList(ColorStateList.valueOf(color));
         return p;
+    }
+
+    static TextView text(Context c, String t, int sp, int color, boolean bold) {
+        TextView v = new TextView(c);
+        v.setText(t);
+        v.setTextSize(sp);
+        v.setTextColor(color);
+        if (bold) v.setTypeface(Typeface.DEFAULT_BOLD);
+        return v;
+    }
+
+    /** Carte sombre arrondie. */
+    static LinearLayout card(Context c) {
+        LinearLayout l = new LinearLayout(c);
+        l.setOrientation(LinearLayout.VERTICAL);
+        GradientDrawable g = shape(c, 0xFF1E293B, 20);
+        g.setStroke(dp(c, 1), 0xFF334155);
+        l.setBackground(g);
+        l.setPadding(dp(c, 18), dp(c, 16), dp(c, 18), dp(c, 18));
+        l.setElevation(dp(c, 6));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        lp.topMargin = dp(c, 16);
+        l.setLayoutParams(lp);
+        return l;
+    }
+
+    /** Bouton en dégradé avec effet d'onde et d'appui. */
+    static Button button(Context c, String t, int c1, int c2) {
+        Button b = new Button(c);
+        b.setText(t);
+        b.setAllCaps(false);
+        b.setTextColor(Color.WHITE);
+        b.setTextSize(15);
+        b.setTypeface(Typeface.DEFAULT_BOLD);
+        b.setBackground(rippleButton(c, c1, c2, 16));
+        b.setStateListAnimator(null);
+        b.setElevation(dp(c, 6));
+        b.setPadding(dp(c, 12), 0, dp(c, 12), 0);
+        pressEffect(b);
+        return b;
     }
 }
