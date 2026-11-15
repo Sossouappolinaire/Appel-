@@ -1,5 +1,5 @@
 # Appel Prédictions (APK)
 
-Tous les fichiers sont à la racine, sauf le workflow : GitHub exige qu'il soit dans `.github/workflows/build.yml`.
-Pour le créer : Add file → Create new file → tape `.github/workflows/build.yml` comme nom, colle le contenu de `build.yml`.
-(Tu peux ensuite supprimer le `build.yml` de la racine.)
+Tous les fichiers sont à la racine du dépôt, sauf le workflow : GitHub exige `.github/workflows/build.yml`.
+Le workflow range lui-même les fichiers dans la structure Android (dossier `proj`) au moment de compiler.
+Fichiers : *.java, AndroidManifest.xml, app.gradle, build.gradle, settings.gradle, gradle.properties.
