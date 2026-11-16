@@ -87,7 +87,9 @@ final class Server {
         String e = o.optString("error");
         switch (e) {
             case "reseau": case "cle": case "service": case "reponse":
-                return showDetail ? "Hors ligne : " + o.optString("detail") : "Hors ligne : vérifie ta connexion internet.";
+                if (showDetail) return "Hors ligne : " + o.optString("detail");
+                if ("reseau".equals(e)) return "Hors ligne : vérifie ta connexion internet.";
+                return "Hors ligne : serveur indisponible, réessaie plus tard. (code : " + e + ")";
             case "identifiants": return "Email ou PIN incorrect.";
             case "verrouille": return "Trop d'essais. Réessaie dans " + Math.max(1, (o.optInt("retry_s", 600) + 59) / 60) + " min.";
             case "email_invalide": return "Email invalide.";

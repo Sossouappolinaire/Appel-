@@ -1,5 +1,27 @@
 -- Serveur de l'application « Appel Prédictions » (comptes, abonnement, canaux par utilisateur).
--- Projet Supabase : site-production-baccara. Script rejouable (IF NOT EXISTS / CREATE OR REPLACE).
+-- Projet Supabase : tv-kouame (hvjgqaxejqnvgvefjhnj). À coller dans Supabase > SQL Editor > Run. Script rejouable (IF NOT EXISTS / CREATE OR REPLACE).
+
+-- ───────────── Mise à niveau automatique depuis l'ancienne version (v1.1) : sans effet si la base est déjà en v1.2 ─────────────
+DO $m$ DECLARE r record; BEGIN
+  IF to_regclass('public.app_sessions') IS NOT NULL
+     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='app_sessions' AND column_name='token_hash') THEN
+    -- anciennes fonctions et anciennes sessions (jeton en clair) : remplacées par la v1.2 (les utilisateurs devront se reconnecter)
+    FOR r IN SELECT p.oid::regprocedure AS sig FROM pg_proc p
+             WHERE p.pronamespace = 'public'::regnamespace
+               AND (p.proname LIKE 'app\_%' OR p.proname LIKE 'adm\_%' OR p.proname LIKE '\_app\_%')
+    LOOP EXECUTE 'DROP FUNCTION IF EXISTS ' || r.sig || ' CASCADE'; END LOOP;
+    DROP TABLE public.app_sessions;
+  END IF;
+  IF to_regclass('public.app_users') IS NOT NULL THEN
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='app_users' AND column_name='fails')
+       AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='app_users' AND column_name='fail_count') THEN
+      ALTER TABLE public.app_users RENAME COLUMN fails TO fail_count;
+    END IF;
+    ALTER TABLE public.app_users DROP CONSTRAINT IF EXISTS app_users_status_check;
+    UPDATE public.app_users SET status = 'active' WHERE status = 'approved';
+    ALTER TABLE public.app_users ADD CONSTRAINT app_users_status_check CHECK (status IN ('pending','active','blocked'));
+  END IF;
+END $m$;
 
 -- ───────────── Tables (RLS activée, aucune politique : seules les fonctions ci-dessous y accèdent) ─────────────
 CREATE TABLE IF NOT EXISTS public.app_users (
@@ -48,8 +70,12 @@ REVOKE ALL ON public.app_users, public.app_sessions, public.app_user_channels, p
 REVOKE ALL ON SEQUENCE public.app_payments_id_seq FROM anon, authenticated;
 
 -- Les appels ne sont plus lisibles avec la clé publique : l'application passe par app_calls / app_history (compte + canaux accordés).
-DROP POLICY IF EXISTS apk_calls_lecture ON public.apk_calls;
-REVOKE ALL ON public.apk_calls FROM anon, authenticated;
+DO $b$ BEGIN
+  IF to_regclass('public.apk_calls') IS NOT NULL THEN
+    EXECUTE 'DROP POLICY IF EXISTS apk_calls_lecture ON public.apk_calls';
+    EXECUTE 'REVOKE ALL ON public.apk_calls FROM anon, authenticated';
+  END IF;
+END $b$;
 
 -- ───────────── Fonctions internes ─────────────
 CREATE OR REPLACE FUNCTION public._app_ms(t timestamptz) RETURNS bigint

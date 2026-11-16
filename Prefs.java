@@ -5,9 +5,9 @@ import android.content.SharedPreferences;
 
 /** Réglages enregistrés sur le téléphone : base Supabase, session du compte, dernier appel traité, état de l'abonnement. */
 final class Prefs {
-    // Base de données (projet « site-production-baccara », celle du site). La clé publique ne peut rien lire directement : tout passe par des fonctions sécurisées (compte + abonnement + canaux).
-    static final String DEFAULT_URL = "https://kmvbsntmzjkpwwqgkqhz.supabase.co";
-    static final String DEFAULT_KEY = "sb_publishable_hMKTMYKHMccROZVz5zd_aw_k6JcuSDu";
+    // Base de données (projet tv-kouame). La clé publique ne peut rien lire directement : tout passe par des fonctions sécurisées (compte + abonnement + canaux).
+    static final String DEFAULT_URL = "https://hvjgqaxejqnvgvefjhnj.supabase.co";
+    static final String DEFAULT_KEY = "sb_publishable_65fqWs6C2pi_ToCuTxnqZg_V9OyUA3v";
     // Lien de paiement (bouton « Payer »)
     static final String PAY_URL = "https://new.sebpay.bj/pay/liker-Z20B0F";
 
@@ -21,7 +21,7 @@ final class Prefs {
     }
 
     // ── base ────────────────────────────────────────────────────────────
-    // clés « url4 / key4 » : les anciennes installations (url3 / key3, ancien projet) repartent sur la base du site
+    // clés « url4 / key4 » : les installations enregistrées pendant les essais sur l'autre projet repartent sur tv-kouame
     static String url(Context c) { return sp(c).getString("url4", DEFAULT_URL); }
     static String key(Context c) { return sp(c).getString("key4", DEFAULT_KEY); }
 
