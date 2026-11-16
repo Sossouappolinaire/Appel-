@@ -7,8 +7,6 @@ import android.os.Bundle;
 import android.text.InputType;
 import android.text.method.HideReturnsTransformationMethod;
 import android.text.method.PasswordTransformationMethod;
-import android.view.Gravity;
-import android.view.View;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
@@ -16,10 +14,10 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
-/** Paramètres : adresses et clés des deux bases, cachées par défaut. */
+/** Clé de la base : visible et modifiable seulement par l'administrateur (jamais par les autres utilisateurs). */
 public class SettingsActivity extends Activity {
-    private final EditText[] urls = new EditText[2];
-    private final EditText[] keys = new EditText[2];
+    private EditText url;
+    private EditText key;
     private boolean shown = false;
     private Button toggle;
 
@@ -55,6 +53,10 @@ public class SettingsActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        if (!Prefs.isAdmin(this)) {
+            finish();
+            return;
+        }
         getWindow().setStatusBarColor(0xFF0B1020);
         getWindow().setNavigationBarColor(0xFF1E1B4B);
 
@@ -71,32 +73,23 @@ public class SettingsActivity extends Activity {
         back.setOnClickListener(v -> finish());
         root.addView(back);
 
-        TextView title = UI.text(this, "⚙️  Paramètres", 28, Color.WHITE, true);
-        root.addView(title);
-        TextView sub = UI.text(this, "Les adresses et les clés sont cachées. Touche « Afficher » pour les voir ou les modifier.", 14, 0xFF94A3B8, false);
+        root.addView(UI.text(this, "🔑  Clé de la base", 28, Color.WHITE, true));
+        TextView sub = UI.text(this, "Réservé à l'administrateur. L'adresse et la clé sont cachées : touche « Afficher » pour les voir ou les modifier.", 14, 0xFF94A3B8, false);
         sub.setPadding(0, dp(6), 0, 0);
         root.addView(sub);
 
-        String[] names = {"🗄️  Base principale", "🛟  Base de secours"};
-        for (int w = 0; w < 2; w++) {
-            LinearLayout card = UI.card(this);
-            card.addView(UI.text(this, names[w], 16, Color.WHITE, true));
-            card.addView(label("Adresse du projet"));
-            urls[w] = secret(Prefs.url(this, w));
-            card.addView(urls[w]);
-            card.addView(label("Clé publique (anon / publishable)"));
-            keys[w] = secret(Prefs.key(this, w));
-            card.addView(keys[w]);
-            if (w == 1) {
-                TextView hint = UI.text(this, "Laisse les deux champs vides pour désactiver la base de secours.", 12, 0xFF64748B, false);
-                hint.setPadding(0, dp(10), 0, 0);
-                card.addView(hint);
-            }
-            root.addView(card);
-            UI.enter(card, w + 1);
-        }
+        LinearLayout card = UI.card(this);
+        card.addView(UI.text(this, "🗄️  Base de données", 16, Color.WHITE, true));
+        card.addView(label("Adresse du projet"));
+        url = secret(Prefs.url(this));
+        card.addView(url);
+        card.addView(label("Clé publique (anon / publishable)"));
+        key = secret(Prefs.key(this));
+        card.addView(key);
+        root.addView(card);
+        UI.enter(card, 1);
 
-        toggle = UI.button(this, "👁  Afficher les clés", 0xFF3B82F6, 0xFF6366F1);
+        toggle = UI.button(this, "👁  Afficher la clé", 0xFF3B82F6, 0xFF6366F1);
         LinearLayout.LayoutParams tlp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(54));
         tlp.topMargin = dp(20);
         root.addView(toggle, tlp);
@@ -108,42 +101,24 @@ public class SettingsActivity extends Activity {
 
         toggle.setOnClickListener(v -> {
             shown = !shown;
-            applyVisibility();
+            for (EditText e : new EditText[]{url, key}) {
+                e.setTransformationMethod(shown ? HideReturnsTransformationMethod.getInstance() : PasswordTransformationMethod.getInstance());
+                e.setSelection(e.getText().length());
+            }
+            toggle.setText(shown ? "🙈  Masquer la clé" : "👁  Afficher la clé");
         });
         save.setOnClickListener(v -> save());
         setContentView(scroll);
     }
 
-    private void applyVisibility() {
-        for (int w = 0; w < 2; w++) {
-            for (EditText e : new EditText[]{urls[w], keys[w]}) {
-                e.setTransformationMethod(shown ? HideReturnsTransformationMethod.getInstance() : PasswordTransformationMethod.getInstance());
-                e.setSelection(e.getText().length());
-            }
-        }
-        toggle.setText(shown ? "🙈  Masquer les clés" : "👁  Afficher les clés");
-    }
-
     private void save() {
-        String[] names = {"principale", "de secours"};
-        String[] newUrl = new String[2];
-        String[] newKey = new String[2];
-        for (int w = 0; w < 2; w++) {
-            newUrl[w] = urls[w].getText().toString().trim();
-            newKey[w] = keys[w].getText().toString().trim();
-            boolean empty = newUrl[w].isEmpty() && newKey[w].isEmpty();
-            if (empty && w == 1) continue; // le secours peut être désactivé
-            if (!newUrl[w].startsWith("https://") || newKey[w].length() < 20) {
-                Toast.makeText(this, "Base " + names[w] + " : adresse (https://…) ou clé invalide.", Toast.LENGTH_LONG).show();
-                return;
-            }
+        String u = url.getText().toString().trim();
+        String k = key.getText().toString().trim();
+        if (!u.startsWith("https://") || k.length() < 20) {
+            Toast.makeText(this, "Adresse (https://…) ou clé invalide.", Toast.LENGTH_LONG).show();
+            return;
         }
-        for (int w = 0; w < 2; w++) {
-            if (!newUrl[w].equals(Prefs.url(this, w)) || !newKey[w].equals(Prefs.key(this, w))) {
-                Prefs.setConnection(this, w, newUrl[w], newKey[w]);
-            }
-        }
-        if (Prefs.active(this) == 1 && !Prefs.hasBase(this, 1)) Prefs.setActive(this, 0);
+        if (!u.equals(Prefs.url(this)) || !k.equals(Prefs.key(this))) Prefs.setConnection(this, u, k);
         Toast.makeText(this, "Enregistré ✅", Toast.LENGTH_SHORT).show();
         finish();
     }

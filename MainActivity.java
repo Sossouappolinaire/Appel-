@@ -29,11 +29,16 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import org.json.JSONArray;
+import org.json.JSONObject;
+
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.Locale;
 
 import java.util.ArrayList;
 import java.util.List;
 
-/** Écran de réglage : adresse Supabase, clé publique, démarrer / arrêter, tester. */
+/** Écran principal : compte à rebours de l'accès, historique des appels, démarrer / arrêter, tester. Réservé aux comptes validés. */
 public class MainActivity extends Activity {
     private static final int GREEN = 0xFF22C55E;
     private static final int ORANGE = 0xFFF59E0B;
@@ -44,9 +49,7 @@ public class MainActivity extends Activity {
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final List<ValueAnimator> animators = new ArrayList<>();
     private final GradientDrawable dotMain = new GradientDrawable();
-    private final GradientDrawable dotBackup = new GradientDrawable();
     private TextView stateMain;
-    private TextView stateBackup;
 
     private GradientDrawable dotBg;
     private TextView statusTitle;
@@ -60,11 +63,43 @@ public class MainActivity extends Activity {
     private View ring2;
     private View core;
 
+    // v148 : compte, accès et paiement
+    private static final int REQ_PICK = 77;
+    private final SimpleDateFormat hm = new SimpleDateFormat("dd/MM HH:mm", Locale.FRANCE);
+    private TextView countdown;
+    private LinearLayout overlay;
+    private TextView ovIcon;
+    private TextView ovTitle;
+    private TextView ovText;
+    private TextView ovInfo;
+    private Button ovPay;
+    private Button ovPaid;
+    private LinearLayout historyBox;
+    private Button adminBtn;
+    private LinearLayout connCard;
+    private boolean fetching = false;
+
     private final Runnable tick = new Runnable() {
         @Override
         public void run() {
             refreshStatus();
             handler.postDelayed(this, 1500);
+        }
+    };
+
+    private final Runnable clock = new Runnable() {
+        @Override
+        public void run() {
+            renderCountdown();
+            handler.postDelayed(this, 1000);
+        }
+    };
+
+    private final Runnable statePoll = new Runnable() {
+        @Override
+        public void run() {
+            fetchState();
+            handler.postDelayed(this, overlay != null && overlay.getVisibility() == View.VISIBLE ? 4000 : 10000);
         }
     };
 
@@ -222,18 +257,27 @@ public class MainActivity extends Activity {
         root.addView(status);
         blocks.add(status);
 
-        // ----- Carte des bases de données (aucune clé affichée ici) -----
-        LinearLayout conn = card();
-        conn.addView(text("🗄️  Bases de données", 15, Color.WHITE, true));
+        // ----- Historique : les 5 derniers appels -----
+        LinearLayout hist = card();
+        hist.addView(text("🕘  5 derniers appels", 15, Color.WHITE, true));
+        historyBox = new LinearLayout(this);
+        historyBox.setOrientation(LinearLayout.VERTICAL);
+        historyBox.setPadding(0, dp(8), 0, 0);
+        historyBox.addView(text("Chargement…", 13, GREY, false));
+        hist.addView(historyBox);
+        root.addView(hist);
+        blocks.add(hist);
+
+        // ----- Connexion à la base (administrateur seulement ; aucune clé affichée ici) -----
+        connCard = card();
+        connCard.addView(text("🗄️  Base de données", 15, Color.WHITE, true));
         stateMain = text("", 13, GREY, true);
-        stateBackup = text("", 13, GREY, true);
-        conn.addView(baseRow("Base principale", dotMain, stateMain));
-        conn.addView(baseRow("Base de secours", dotBackup, stateBackup));
-        TextView note = text("Si la base principale ne répond plus, l'application passe toute seule sur la base de secours. Les clés sont cachées : voir « Paramètres ».", 12, 0xFF64748B, false);
+        connCard.addView(baseRow("Connexion", dotMain, stateMain));
+        TextView note = text("L'application lit la base à ta place : la clé reste cachée (administrateur : « Administration »).", 12, 0xFF64748B, false);
         note.setPadding(0, dp(12), 0, 0);
-        conn.addView(note);
-        root.addView(conn);
-        blocks.add(conn);
+        connCard.addView(note);
+        root.addView(connCard);
+        blocks.add(connCard);
 
         // ----- Boutons colorés -----
         LinearLayout actions = new LinearLayout(this);
@@ -259,8 +303,8 @@ public class MainActivity extends Activity {
         Button perm = button("⚙️  Autorisations (plein écran, batterie)", 0xFFA855F7, 0xFF7C3AED);
         actions.addView(test, full());
         actions.addView(testConn, full());
-        Button settings = button("⚙️  Paramètres (bases et clés)", 0xFF0EA5E9, 0xFF2563EB);
-        actions.addView(settings, full());
+        adminBtn = button("👑  Administration", 0xFFEAB308, 0xFFCA8A04);
+        actions.addView(adminBtn, full());
         actions.addView(perm, full());
         root.addView(actions);
         blocks.add(actions);
@@ -278,11 +322,265 @@ public class MainActivity extends Activity {
         });
         testConn.setOnClickListener(v -> testConnection(testConn));
         perm.setOnClickListener(v -> openPermissions());
-        settings.setOnClickListener(v -> startActivity(new Intent(this, SettingsActivity.class)));
+        adminBtn.setOnClickListener(v -> startActivity(new Intent(this, AdminActivity.class)));
 
-        setContentView(scroll);
+        LinearLayout column = new LinearLayout(this);
+        column.setOrientation(LinearLayout.VERTICAL);
+        column.setBackgroundColor(0xFF0B1020);
+        column.addView(buildTopBar(), new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+        FrameLayout content = new FrameLayout(this);
+        content.addView(scroll, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+        overlay = buildOverlay();
+        overlay.setVisibility(View.GONE);
+        content.addView(overlay, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+        column.addView(content, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
+
+        setContentView(column);
         refreshStatus();
+        applyAccess();
+        renderCountdown();
         for (int i = 0; i < blocks.size(); i++) UI.enter(blocks.get(i), i);
+    }
+
+    // ── barre du haut : compte à rebours ─────────────────────────────────
+    private View buildTopBar() {
+        LinearLayout bar = new LinearLayout(this);
+        bar.setOrientation(LinearLayout.HORIZONTAL);
+        bar.setGravity(Gravity.CENTER_VERTICAL);
+        bar.setBackgroundColor(0xFF111827);
+        bar.setPadding(dp(16), dp(10), dp(8), dp(10));
+        bar.setElevation(dp(4));
+        countdown = text("…", 16, Color.WHITE, true);
+        bar.addView(countdown, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        TextView out = text("Déconnexion", 12, GREY, true);
+        out.setPadding(dp(12), dp(8), dp(12), dp(8));
+        out.setOnClickListener(v -> logout());
+        bar.addView(out);
+        return bar;
+    }
+
+    /** Compte à rebours calculé avec l'heure du serveur (changer l'heure du téléphone ne sert à rien). */
+    private void renderCountdown() {
+        if (countdown == null) return;
+        if (Prefs.isAdmin(this)) {
+            countdown.setText("👑 Administrateur • accès illimité");
+            countdown.setTextColor(0xFFFACC15);
+            return;
+        }
+        String st = Prefs.accessStatus(this);
+        if ("pending".equals(st)) {
+            countdown.setText("🕓 Compte en attente de validation");
+            countdown.setTextColor(ORANGE);
+            return;
+        }
+        if ("blocked".equals(st)) {
+            countdown.setText("⛔ Compte bloqué");
+            countdown.setTextColor(RED);
+            return;
+        }
+        long left = Prefs.accessUntil(this) - (System.currentTimeMillis() + Prefs.serverOffset(this));
+        if (!Prefs.accessActive(this) || left <= 0) {
+            countdown.setText("⌛ Temps écoulé");
+            countdown.setTextColor(RED);
+            if (Prefs.accessActive(this)) fetchState(); // le temps vient de finir : on demande au serveur (une durée a peut-être été ajoutée)
+            return;
+        }
+        long s = left / 1000;
+        long d = s / 86400;
+        long h = (s % 86400) / 3600;
+        long m = (s % 3600) / 60;
+        long sec = s % 60;
+        String t = d > 0 ? String.format(Locale.FRANCE, "%d j %02d:%02d:%02d", d, h, m, sec) : String.format(Locale.FRANCE, "%02d:%02d:%02d", h, m, sec);
+        countdown.setText("⏳ Temps restant : " + t);
+        countdown.setTextColor(s > 3600 ? GREEN : (s > 600 ? ORANGE : RED));
+    }
+
+    // ── écran de blocage : attente de validation, compte bloqué, accès terminé ──
+    private LinearLayout buildOverlay() {
+        LinearLayout o = new LinearLayout(this);
+        o.setOrientation(LinearLayout.VERTICAL);
+        o.setGravity(Gravity.CENTER);
+        o.setBackground(UI.background(0xFF0B1020, 0xFF1E1B4B));
+        o.setPadding(dp(24), dp(24), dp(24), dp(24));
+        o.setClickable(true); // les touches ne passent pas à l'écran dessous
+
+        ovIcon = text("🔒", 54, Color.WHITE, false);
+        ovIcon.setGravity(Gravity.CENTER);
+        o.addView(ovIcon);
+        ovTitle = text("", 22, Color.WHITE, true);
+        ovTitle.setGravity(Gravity.CENTER);
+        ovTitle.setPadding(0, dp(12), 0, 0);
+        o.addView(ovTitle);
+        ovText = text("", 14, 0xFFCBD5E1, false);
+        ovText.setGravity(Gravity.CENTER);
+        ovText.setPadding(0, dp(10), 0, 0);
+        o.addView(ovText);
+        ovInfo = text("", 13, 0xFF4ADE80, false);
+        ovInfo.setGravity(Gravity.CENTER);
+        ovInfo.setPadding(0, dp(12), 0, 0);
+        o.addView(ovInfo);
+
+        ovPay = button("💳  Payer", 0xFFF59E0B, 0xFFEA580C);
+        ovPaid = button("✅  J'ai déjà payé", 0xFF22C55E, 0xFF16A34A);
+        Button refresh = button("🔄  Actualiser", 0xFF3B82F6, 0xFF6366F1);
+        Button out = button("Se déconnecter", 0xFF475569, 0xFF334155);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(54));
+        lp.topMargin = dp(14);
+        o.addView(ovPay, lp);
+        o.addView(ovPaid, full());
+        o.addView(refresh, full());
+        o.addView(out, full());
+
+        ovPay.setOnClickListener(v -> {
+            try {
+                startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(Prefs.PAY_URL)));
+            } catch (Exception e) {
+                Toast.makeText(this, "Impossible d'ouvrir le lien de paiement.", Toast.LENGTH_LONG).show();
+            }
+        });
+        ovPaid.setOnClickListener(v -> pickScreenshot());
+        refresh.setOnClickListener(v -> fetchState());
+        out.setOnClickListener(v -> logout());
+        return o;
+    }
+
+    /** Affiche ou cache l'écran de blocage selon l'état du compte, et les parties réservées à l'administrateur. */
+    private void applyAccess() {
+        boolean admin = Prefs.isAdmin(this);
+        boolean active = Prefs.accessActive(this);
+        String st = Prefs.accessStatus(this);
+        if (adminBtn != null) adminBtn.setVisibility(admin ? View.VISIBLE : View.GONE);
+        if (connCard != null) connCard.setVisibility(admin ? View.VISIBLE : View.GONE);
+        if (overlay == null) return;
+        if (active) {
+            overlay.setVisibility(View.GONE);
+            return;
+        }
+        overlay.setVisibility(View.VISIBLE);
+        if ("pending".equals(st)) {
+            ovIcon.setText("🕓");
+            ovTitle.setText("Inscription envoyée");
+            ovText.setText("L'administrateur doit valider ton compte. Tu auras ensuite 24 h d'essai. Cette page se met à jour toute seule.");
+            ovInfo.setText("");
+            ovPay.setVisibility(View.GONE);
+            ovPaid.setVisibility(View.GONE);
+        } else if ("blocked".equals(st)) {
+            ovIcon.setText("⛔");
+            ovTitle.setText("Compte bloqué");
+            ovText.setText("L'administrateur a bloqué ce compte. Contacte-le pour en savoir plus.");
+            ovInfo.setText("");
+            ovPay.setVisibility(View.GONE);
+            ovPaid.setVisibility(View.GONE);
+        } else {
+            ovIcon.setText("⌛");
+            ovTitle.setText("Ton accès est terminé");
+            ovText.setText("Appuie sur « Payer », puis sur « J'ai déjà payé » pour envoyer la capture d'écran de ton paiement. L'administrateur te rouvre l'accès après vérification.");
+            ovInfo.setText(Prefs.pendingProof(this) ? "✅ Ta capture a été envoyée : l'administrateur va la vérifier." : "");
+            ovPay.setVisibility(View.VISIBLE);
+            ovPaid.setVisibility(View.VISIBLE);
+            ovPaid.setText(Prefs.pendingProof(this) ? "✅  Envoyer une autre capture" : "✅  J'ai déjà payé");
+        }
+    }
+
+    /** Demande l'état du compte (et les 5 derniers appels) au serveur. */
+    private void fetchState() {
+        if (fetching || Prefs.token(this).isEmpty()) return;
+        fetching = true;
+        new Thread(() -> {
+            JSONObject r = Server.refreshState(this);
+            JSONObject h = null;
+            if (r.optBoolean("ok") && Prefs.accessActive(this)) h = Server.call(this, "app_history", "p_token", Prefs.token(this));
+            final JSONObject hist = h;
+            handler.post(() -> {
+                fetching = false;
+                if (r.optBoolean("ok")) {
+                    applyAccess();
+                    renderCountdown();
+                    if (hist != null && hist.optBoolean("ok")) renderHistory(hist.optJSONArray("calls"));
+                    else if (!Prefs.accessActive(this)) renderHistory(null);
+                } else if ("session".equals(r.optString("error"))) {
+                    goLogin();
+                }
+            });
+        }).start();
+    }
+
+    private void renderHistory(JSONArray a) {
+        if (historyBox == null) return;
+        historyBox.removeAllViews();
+        if (a == null || a.length() == 0) {
+            historyBox.addView(text("Aucun appel pour l'instant.", 13, GREY, false));
+            return;
+        }
+        for (int i = 0; i < a.length(); i++) {
+            JSONObject o = a.optJSONObject(i);
+            if (o == null) continue;
+            int game = o.optInt("game_number", 0);
+            String line = hm.format(new Date(o.optLong("at_ms"))) + "   " + o.optString("suit") + (game > 0 ? " N°" + game : "") + "  •  " + o.optString("channel_name");
+            TextView row = text(line, 13, 0xFFE2E8F0, false);
+            row.setPadding(0, dp(6), 0, dp(6));
+            historyBox.addView(row);
+        }
+    }
+
+    private void goLogin() {
+        Prefs.unlocked = false;
+        startActivity(new Intent(this, LoginActivity.class));
+    }
+
+    private void logout() {
+        final String token = Prefs.token(this);
+        Prefs.setRunning(this, false);
+        Prefs.setStatus(this, "Arrêté");
+        stopService(new Intent(this, CallService.class));
+        new Thread(() -> Server.call(this, "app_logout", "p_token", token)).start();
+        Prefs.clearSession(this);
+        Prefs.setBio(this, false);
+        goLogin();
+    }
+
+    // ── preuve de paiement : capture d'écran envoyée à l'administrateur ───────
+    private void pickScreenshot() {
+        Intent i = new Intent(Intent.ACTION_GET_CONTENT);
+        i.setType("image/*");
+        i.addCategory(Intent.CATEGORY_OPENABLE);
+        try {
+            startActivityForResult(Intent.createChooser(i, "Choisis la capture d'écran du paiement"), REQ_PICK);
+        } catch (Exception e) {
+            Toast.makeText(this, "Impossible d'ouvrir la galerie.", Toast.LENGTH_LONG).show();
+        }
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQ_PICK && resultCode == RESULT_OK && data != null && data.getData() != null) uploadProof(data.getData());
+    }
+
+    private void uploadProof(final Uri uri) {
+        ovInfo.setTextColor(0xFFCBD5E1);
+        ovInfo.setText("⏳ Envoi de la capture…");
+        ovPaid.setEnabled(false);
+        new Thread(() -> {
+            String msg;
+            boolean ok = false;
+            try {
+                String b64 = Img.toJpegBase64(this, uri, 1280);
+                JSONObject r = Server.callTimeout(this, "app_submit_payment", 90000, "p_token", Prefs.token(this), "p_image", b64);
+                ok = r.optBoolean("ok");
+                msg = ok ? "✅ Capture envoyée : l'administrateur va la vérifier." : "❌ " + Server.message(r);
+            } catch (Exception e) {
+                msg = "❌ " + e.getMessage();
+            }
+            final String shown = msg;
+            final boolean sent = ok;
+            handler.post(() -> {
+                ovPaid.setEnabled(true);
+                ovInfo.setTextColor(sent ? 0xFF4ADE80 : 0xFFF87171);
+                ovInfo.setText(shown);
+                if (sent) fetchState();
+            });
+        }).start();
     }
 
     /** Met à jour la pastille, le texte d'état et la barre de progression. */
@@ -292,7 +590,8 @@ public class MainActivity extends Activity {
         String low = st.toLowerCase();
         boolean ok = running && st.startsWith("Connecté");
         boolean err = low.startsWith("erreur") || low.startsWith("pas de connexion") || low.startsWith("clé refusée")
-                || low.startsWith("table") || low.startsWith("renseigne");
+                || low.startsWith("table") || low.startsWith("renseigne") || low.startsWith("accès") || low.startsWith("connexion requise")
+                || low.startsWith("compte");
 
         int color;
         String title;
@@ -319,7 +618,7 @@ public class MainActivity extends Activity {
         statusTitle.setTextColor(color == GREY ? Color.WHITE : color);
         statusDetail.setText(detail);
 
-        boolean configured = Prefs.hasBase(this, 0) || Prefs.hasBase(this, 1);
+        boolean configured = true;
         int progress = ok ? 100 : (running && !err ? 67 : (configured ? 34 : 8));
         stepBar.setProgress(progress, true);
         step1.setTextColor(progress >= 34 ? CYAN : 0xFF64748B);
@@ -327,9 +626,7 @@ public class MainActivity extends Activity {
         step3.setTextColor(progress >= 100 ? GREEN : 0xFF64748B);
         activityBar.setVisibility(running && !err ? View.VISIBLE : View.GONE);
 
-        int act = Prefs.active(this);
-        showBase(dotMain, stateMain, Prefs.hasBase(this, 0), running && act == 0, ok, err);
-        showBase(dotBackup, stateBackup, Prefs.hasBase(this, 1), running && act == 1, ok, err);
+        showBase(dotMain, stateMain, true, running, ok, err);
     }
 
     private void showBase(GradientDrawable dot, TextView state, boolean configured, boolean active, boolean ok, boolean err) {
@@ -365,8 +662,8 @@ public class MainActivity extends Activity {
     }
 
     private void startWatching() {
-        if (!Prefs.hasBase(this, 0) && !Prefs.hasBase(this, 1)) {
-            Toast.makeText(this, "Renseigne une base dans Paramètres (adresse https://… et clé publique).", Toast.LENGTH_LONG).show();
+        if (!Prefs.accessActive(this)) {
+            Toast.makeText(this, "Ton accès n'est pas actif : voir l'écran de blocage.", Toast.LENGTH_LONG).show();
             return;
         }
         Prefs.setRunning(this, true);
@@ -390,29 +687,17 @@ public class MainActivity extends Activity {
         button.setAlpha(0.6f);
         button.setText("⏳  Test en cours…");
         new Thread(() -> {
-            StringBuilder sb = new StringBuilder();
-            for (int w = 0; w < 2; w++) {
-                String name = w == 0 ? "Principale : " : "Secours : ";
-                if (!Prefs.hasBase(this, w)) {
-                    sb.append(name).append("non configurée\n");
-                    continue;
-                }
-                Api.Result r = Api.get(Prefs.url(this, w), Prefs.key(this, w), "/rest/v1/apk_calls?select=id&order=id.desc&limit=1");
-                String p = Api.problem(r);
-                if (p != null) {
-                    sb.append(name).append("❌ ").append(p).append("\n");
-                } else {
-                    int n = 0;
-                    try { n = new JSONArray(r.body).length(); } catch (Exception ignored) { }
-                    sb.append(name).append("✅ OK").append(n > 0 ? "" : " (aucun appel pour l'instant)").append("\n");
-                }
-            }
-            final String shown = sb.toString().trim();
+            JSONObject r = Server.refreshState(this);
+            String shown;
+            if (r.optBoolean("ok")) shown = "✅ Connexion OK" + (Prefs.accessActive(this) ? "" : " (accès en attente ou terminé)");
+            else shown = "❌ " + Server.message(r);
+            final String text = shown;
             handler.post(() -> {
                 button.setEnabled(true);
                 button.setAlpha(1f);
                 button.setText(original);
-                Toast.makeText(MainActivity.this, shown, Toast.LENGTH_LONG).show();
+                Toast.makeText(MainActivity.this, text, Toast.LENGTH_LONG).show();
+                applyAccess();
             });
         }).start();
     }
@@ -435,8 +720,17 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        // verrouillé : PIN ou empreinte obligatoire à chaque lancement de l'application
+        if (!Prefs.unlocked || Prefs.token(this).isEmpty()) {
+            goLogin();
+            return;
+        }
         startAnimations();
+        applyAccess();
+        renderCountdown();
         handler.post(tick);
+        handler.post(clock);
+        handler.post(statePoll);
     }
 
     @Override
@@ -444,5 +738,7 @@ public class MainActivity extends Activity {
         super.onPause();
         UI.stopAll(animators);
         handler.removeCallbacks(tick);
+        handler.removeCallbacks(clock);
+        handler.removeCallbacks(statePoll);
     }
 }

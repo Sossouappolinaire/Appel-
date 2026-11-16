@@ -218,4 +218,24 @@ final class UI {
         pressEffect(b);
         return b;
     }
+
+    /** Champ de saisie sombre arrondi. */
+    static android.widget.EditText field(Context c, String hint, int inputType) {
+        final android.widget.EditText e = new android.widget.EditText(c);
+        final GradientDrawable g = shape(c, 0xFF0F172A, 12);
+        g.setStroke(dp(c, 1), 0xFF334155);
+        e.setBackground(g);
+        e.setPadding(dp(c, 14), dp(c, 12), dp(c, 14), dp(c, 12));
+        e.setTextColor(Color.WHITE);
+        e.setHintTextColor(0xFF64748B);
+        e.setTextSize(16);
+        e.setHint(hint);
+        e.setInputType(inputType);
+        e.setSingleLine(true);
+        e.setOnFocusChangeListener((v, focused) -> g.setStroke(dp(c, focused ? 2 : 1), focused ? 0xFF38BDF8 : 0xFF334155));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        lp.topMargin = dp(c, 10);
+        e.setLayoutParams(lp);
+        return e;
+    }
 }

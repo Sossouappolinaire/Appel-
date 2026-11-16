@@ -28,7 +28,7 @@ import java.util.Date;
 import java.util.Locale;
 
 /**
- * Service de premier plan : lit la table « apk_calls » des DEUX bases Supabase (principale + secours) toutes les 3 secondes ; dès qu'une nouvelle ligne
+ * Service de premier plan : interroge la base (fonction sécurisée « app_calls », compte validé + accès en cours) toutes les 3 secondes ; dès qu'une nouvelle ligne
  * apparaît (prédiction lancée dans le canal choisi sur le site), le téléphone sonne comme un appel entrant,
  * en boucle, jusqu'à « Décrocher » (ou « Refuser »).
  */
@@ -127,12 +127,8 @@ public class CallService extends Service {
         if (nm != null) nm.notify(ID_SERVICE, serviceNotification(s));
     }
 
-    // ── lecture de Supabase : base principale ET base de secours, lues TOUTES LES DEUX ────────
-    // Le site écrit chaque appel sur toutes les bases saines. Une base pleine reste lisible mais ne reçoit plus de
-    // nouveaux appels : n'en lire qu'une ferait donc rater des appels. On surveille les deux à chaque tour et on
-    // ignore le doublon (le même appel présent sur les deux bases ne sonne qu'une fois).
+    // ── lecture de la base : fonction sécurisée « app_calls » (il faut un compte validé et un accès en cours) ────────
     private static final long DEDUP_MS = 45000;
-    private final int[] sinceCheck = new int[2];
     private final java.util.HashMap<String, Long> recent = new java.util.HashMap<>();
 
     private void startPolling() {
@@ -154,37 +150,12 @@ public class CallService extends Service {
     private String now() { return new SimpleDateFormat("HH:mm:ss", Locale.FRANCE).format(new Date()); }
 
     private void pollOnce() throws Exception {
-        String[] err = new String[2];
-        boolean[] ok = new boolean[2];
-        int configured = 0;
-        for (int w = 0; w < 2; w++) {
-            if (!Prefs.hasBase(this, w)) continue;
-            configured++;
-            try {
-                err[w] = pollBase(w);
-            } catch (Exception e) {
-                err[w] = "Erreur : " + e.getMessage();
-            }
-            ok[w] = err[w] == null;
-        }
-        if (configured == 0) {
-            setStatus("Renseigne l'adresse Supabase et la clé publique (Paramètres).");
-            return;
-        }
-        if (ok[0] || ok[1]) {
-            Prefs.setActive(this, ok[0] ? 0 : 1); // sert seulement à l'affichage (pastille « Active »)
-            String where;
-            if (ok[0] && ok[1]) where = "principale + secours";
-            else if (ok[0]) where = Prefs.hasBase(this, 1) ? "principale (secours indisponible)" : "principale";
-            else where = Prefs.hasBase(this, 0) ? "secours (principale indisponible)" : "secours";
-            setStatus("Connecté • " + where + " • dernière vérification " + now());
-            return;
-        }
-        if (configured == 2) setStatus("Erreur : principale et secours indisponibles (" + err[0] + ")");
-        else setStatus(err[Prefs.hasBase(this, 0) ? 0 : 1]);
+        String err = pollBase();
+        if (err == null) setStatus("Connecté • dernière vérification " + now());
+        else setStatus(err);
     }
 
-    /** Vrai si le même appel vient déjà de sonner (copie reçue de l'autre base). */
+    /** Vrai si le même appel vient déjà de sonner. */
     private boolean isDuplicate(String key) {
         long t = System.currentTimeMillis();
         java.util.Iterator<java.util.Map.Entry<String, Long>> it = recent.entrySet().iterator();
@@ -194,48 +165,48 @@ public class CallService extends Service {
         return false;
     }
 
-    /** Interroge une base. Renvoie null si tout va bien, sinon le message d'erreur. */
-    private String pollBase(int which) throws Exception {
-        String url = Prefs.url(this, which);
-        String key = Prefs.key(this, which);
-        if (url.isEmpty() || key.isEmpty()) return "Renseigne l'adresse Supabase et la clé publique (Paramètres).";
-        long last = Prefs.lastId(this, which);
+    /** Interroge la base. Renvoie null si tout va bien, sinon le message d'erreur. */
+    private String pollBase() throws Exception {
+        String token = Prefs.token(this);
+        if (token.isEmpty()) return "Connexion requise : ouvre l'application et connecte-toi.";
+        long last = Prefs.lastId(this);
+        JSONObject r = Server.call(this, "app_calls", "p_token", token, "p_after", last);
+        if (!r.optBoolean("ok")) {
+            String e = r.optString("error");
+            if ("reseau".equals(e)) return "Pas de connexion : " + r.optString("detail");
+            if ("session".equals(e)) {
+                Prefs.clearSession(this);
+                return "Connexion requise : session expirée, reconnecte-toi dans l'application.";
+            }
+            if ("expire".equals(e)) {
+                Prefs.setLastId(this, -1); // au retour de l'accès, les appels manqués ne sonnent pas d'un coup
+                return "Accès terminé : paiement requis pour continuer.";
+            }
+            if ("pending".equals(e)) return "Compte en attente de validation par l'administrateur.";
+            if ("blocked".equals(e)) return "Compte bloqué par l'administrateur.";
+            return "Erreur : " + e + " " + r.optString("detail");
+        }
+        long max = r.optLong("max_id", 0);
         if (last < 0) { // première connexion : on part du dernier appel existant (les anciens ne sonnent pas)
-            Api.Result r = Api.get(url, key, "/rest/v1/apk_calls?select=id&order=id.desc&limit=1");
-            String p = Api.problem(r);
-            if (p != null) return p;
-            JSONArray a = new JSONArray(r.body);
-            Prefs.setLastId(this, which, a.length() > 0 ? a.getJSONObject(0).getLong("id") : 0);
-            sinceCheck[which] = 0;
+            Prefs.setLastId(this, max);
             return null;
         }
-        Api.Result r = Api.get(url, key, "/rest/v1/apk_calls?select=id,channel_name,game_number,suit,kind&id=gt." + last + "&order=id.asc&limit=20");
-        String p = Api.problem(r);
-        if (p != null) return p;
-        JSONArray a = new JSONArray(r.body);
-        for (int i = 0; i < a.length(); i++) {
-            JSONObject o = a.getJSONObject(i);
-            Prefs.setLastId(this, which, o.getLong("id"));
-            String game = o.isNull("game_number") || o.optInt("game_number", 0) == 0 ? "" : " N°" + o.optInt("game_number");
-            String text;
-            if ("test".equals(o.optString("kind"))) text = "🧪 Appel de test du site";
-            else text = (o.optString("suit") + game + "\n" + o.optString("channel_name")).trim();
-            // même appel déjà reçu par l'autre base : on ne sonne pas deux fois
-            String dedupKey = o.optString("kind") + "|" + o.optString("channel_name") + "|" + o.optInt("game_number", 0) + "|" + o.optString("suit");
-            if (isDuplicate(dedupKey)) continue;
-            startRinging(text);
-        }
-        // le compteur d'appels peut repartir de zéro si la table a été recréée : on se recale de temps en temps
-        sinceCheck[which]++;
-        if (sinceCheck[which] >= 20) {
-            sinceCheck[which] = 0;
-            Api.Result m = Api.get(url, key, "/rest/v1/apk_calls?select=id&order=id.desc&limit=1");
-            if (Api.problem(m) == null) {
-                JSONArray ma = new JSONArray(m.body);
-                long max = ma.length() > 0 ? ma.getJSONObject(0).getLong("id") : 0;
-                if (max < Prefs.lastId(this, which)) Prefs.setLastId(this, which, max);
+        JSONArray a = r.optJSONArray("calls");
+        if (a != null) {
+            for (int i = 0; i < a.length(); i++) {
+                JSONObject o = a.getJSONObject(i);
+                Prefs.setLastId(this, o.getLong("id"));
+                String game = o.isNull("game_number") || o.optInt("game_number", 0) == 0 ? "" : " N°" + o.optInt("game_number");
+                String text;
+                if ("test".equals(o.optString("kind"))) text = "🧪 Appel de test du site";
+                else text = (o.optString("suit") + game + "\n" + o.optString("channel_name")).trim();
+                String dedupKey = o.optString("kind") + "|" + o.optString("channel_name") + "|" + o.optInt("game_number", 0) + "|" + o.optString("suit");
+                if (isDuplicate(dedupKey)) continue;
+                startRinging(text);
             }
         }
+        // le compteur d'appels peut repartir de zéro si la table a été recréée : on se recale
+        if (max < Prefs.lastId(this)) Prefs.setLastId(this, max);
         return null;
     }
 
