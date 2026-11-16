@@ -75,6 +75,8 @@ public class MainActivity extends Activity {
     private Button ovPay;
     private Button ovPaid;
     private LinearLayout historyBox;
+    private TextView histBadge;
+    private TextView channelsText;
     private Button adminBtn;
     private LinearLayout connCard;
     private boolean fetching = false;
@@ -259,7 +261,13 @@ public class MainActivity extends Activity {
 
         // ----- Historique : les 5 derniers appels -----
         LinearLayout hist = card();
-        hist.addView(text("🕘  5 derniers appels", 15, Color.WHITE, true));
+        LinearLayout histHead = new LinearLayout(this);
+        histHead.setOrientation(LinearLayout.HORIZONTAL);
+        histHead.setGravity(Gravity.CENTER_VERTICAL);
+        histHead.addView(text("🕘  5 derniers appels", 15, Color.WHITE, true), new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        histBadge = text("…", 12, GREY, true);
+        histHead.addView(histBadge);
+        hist.addView(histHead);
         historyBox = new LinearLayout(this);
         historyBox.setOrientation(LinearLayout.VERTICAL);
         historyBox.setPadding(0, dp(8), 0, 0);
@@ -267,6 +275,18 @@ public class MainActivity extends Activity {
         hist.addView(historyBox);
         root.addView(hist);
         blocks.add(hist);
+
+        // ----- Canaux accordés par l'administrateur : seulement leur nom -----
+        LinearLayout chans = card();
+        chans.addView(text("📡  Canaux accordés", 15, Color.WHITE, true));
+        channelsText = text("", 13, 0xFFE2E8F0, false);
+        channelsText.setPadding(0, dp(8), 0, 0);
+        chans.addView(channelsText);
+        TextView chNote = text("Le téléphone sonne seulement quand une prédiction est lancée dans l'un de ces canaux.", 12, 0xFF64748B, false);
+        chNote.setPadding(0, dp(8), 0, 0);
+        chans.addView(chNote);
+        root.addView(chans);
+        blocks.add(chans);
 
         // ----- Connexion à la base (administrateur seulement ; aucune clé affichée ici) -----
         connCard = card();
@@ -583,13 +603,36 @@ public class MainActivity extends Activity {
         }).start();
     }
 
+    /** « Connecté » si le serveur répond, « Hors ligne » sinon (jamais de mention de la base de données chez les utilisateurs). */
+    private void showLink() {
+        if (histBadge == null) return;
+        if (Server.link > 0) { histBadge.setText("● Connecté"); histBadge.setTextColor(GREEN); }
+        else if (Server.link < 0) { histBadge.setText("● Hors ligne"); histBadge.setTextColor(RED); }
+        else { histBadge.setText("…"); histBadge.setTextColor(GREY); }
+    }
+
+    private void showChannels() {
+        if (channelsText == null) return;
+        String[] names = Prefs.channels(this);
+        if (Prefs.isAdmin(this)) {
+            channelsText.setText(names.length == 0 ? "Tous les canaux (aucun canal accordé sur le site pour l'instant)." : "Tous les canaux :\n• " + android.text.TextUtils.join("\n• ", names));
+        } else if (names.length == 0) {
+            channelsText.setText("Aucun canal accordé pour l'instant : l'administrateur doit en choisir un pour ton compte.");
+        } else {
+            channelsText.setText("• " + android.text.TextUtils.join("\n• ", names));
+        }
+    }
+
     /** Met à jour la pastille, le texte d'état et la barre de progression. */
     private void refreshStatus() {
+        showLink();
+        showChannels();
         boolean running = Prefs.running(this);
         String st = Prefs.status(this);
         String low = st.toLowerCase();
         boolean ok = running && st.startsWith("Connecté");
-        boolean err = low.startsWith("erreur") || low.startsWith("pas de connexion") || low.startsWith("clé refusée")
+        boolean offline = low.startsWith("hors ligne");
+        boolean err = offline || low.startsWith("erreur") || low.startsWith("pas de connexion") || low.startsWith("clé refusée")
                 || low.startsWith("table") || low.startsWith("renseigne") || low.startsWith("accès") || low.startsWith("connexion requise")
                 || low.startsWith("compte");
 
@@ -598,7 +641,7 @@ public class MainActivity extends Activity {
         String detail;
         if (err) {
             color = RED;
-            title = "Problème";
+            title = offline ? "Hors ligne" : "Problème";
             detail = st;
         } else if (ok) {
             color = GREEN;

@@ -173,7 +173,9 @@ public class CallService extends Service {
         JSONObject r = Server.call(this, "app_calls", "p_token", token, "p_after", last);
         if (!r.optBoolean("ok")) {
             String e = r.optString("error");
-            if ("reseau".equals(e)) return "Pas de connexion : " + r.optString("detail");
+            if ("reseau".equals(e) || "cle".equals(e) || "service".equals(e) || "reponse".equals(e)) {
+                return Server.showDetail ? "Hors ligne : " + r.optString("detail") : "Hors ligne";
+            }
             if ("session".equals(e)) {
                 Prefs.clearSession(this);
                 return "Connexion requise : session expirée, reconnecte-toi dans l'application.";

@@ -34,6 +34,58 @@ public class AdminActivity extends Activity {
     private LinearLayout proofsBox;
     private TextView info;
     private boolean visible = false;
+    /** Canaux accordés depuis le site (id + nom) : visibles seulement ici, chez l'administrateur. */
+    private JSONArray channelCatalog = new JSONArray();
+
+    private interface ChannelsDone { void done(JSONArray chosen); }
+
+    private String channelName(String id) {
+        for (int i = 0; i < channelCatalog.length(); i++) {
+            JSONObject c = channelCatalog.optJSONObject(i);
+            if (c != null && id.equals(c.optString("id"))) return c.optString("name");
+        }
+        return id;
+    }
+
+    private String channelsText(JSONArray ids) {
+        if (ids == null || ids.length() == 0) return "aucun canal";
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < ids.length(); i++) sb.append(i > 0 ? ", " : "").append(channelName(ids.optString(i)));
+        return sb.toString();
+    }
+
+    /** Fenêtre avec une case à cocher par canal. */
+    private void pickChannels(String title, JSONArray current, final boolean requireOne, final ChannelsDone done) {
+        final int n = channelCatalog.length();
+        if (n == 0) {
+            if (requireOne) done.done(new JSONArray());
+            else Toast.makeText(this, "Aucun canal n'est encore accordé sur le site (bouton « Appel APK »).", Toast.LENGTH_LONG).show();
+            return;
+        }
+        final String[] ids = new String[n];
+        final String[] names = new String[n];
+        final boolean[] checked = new boolean[n];
+        for (int i = 0; i < n; i++) {
+            JSONObject c = channelCatalog.optJSONObject(i);
+            ids[i] = c == null ? "" : c.optString("id");
+            names[i] = c == null ? "" : c.optString("name");
+            for (int j = 0; current != null && j < current.length(); j++) if (ids[i].equals(current.optString(j))) checked[i] = true;
+        }
+        new AlertDialog.Builder(this)
+                .setTitle(title)
+                .setMultiChoiceItems(names, checked, (d, which, isChecked) -> checked[which] = isChecked)
+                .setPositiveButton("Valider", (d, w) -> {
+                    JSONArray out = new JSONArray();
+                    for (int i = 0; i < n; i++) if (checked[i]) out.put(ids[i]);
+                    if (requireOne && out.length() == 0) {
+                        Toast.makeText(this, "Coche au moins un canal : c'est lui qui fera sonner l'appel.", Toast.LENGTH_LONG).show();
+                        return;
+                    }
+                    done.done(out);
+                })
+                .setNegativeButton("Annuler", null)
+                .show();
+    }
 
     private final Runnable auto = new Runnable() {
         @Override
@@ -154,6 +206,8 @@ public class AdminActivity extends Activity {
     private void render(JSONObject r) {
         JSONArray users = r.optJSONArray("users");
         JSONArray proofs = r.optJSONArray("proofs");
+        JSONArray cat = r.optJSONArray("channels");
+        channelCatalog = cat != null ? cat : new JSONArray();
         int pending = 0;
         int toCheck = 0;
         usersBox.removeAllViews();
@@ -192,7 +246,7 @@ public class AdminActivity extends Activity {
         String line;
         int color = 0xFF94A3B8;
         if (u.optBoolean("is_admin")) {
-            line = "👑 Administrateur";
+            line = "👑 Administrateur • reçoit tous les canaux";
         } else if ("pending".equals(status)) {
             line = "🕓 En attente • inscrit le " + when(u.optLong("created_ms"));
             color = 0xFFF59E0B;
@@ -213,13 +267,27 @@ public class AdminActivity extends Activity {
         st.setPadding(0, dp(2), 0, 0);
         row.addView(st);
 
+        final JSONArray userChannels = u.optJSONArray("channels");
+        if (!u.optBoolean("is_admin") && !"pending".equals(status)) {
+            TextView ch = UI.text(this, "📡 " + channelsText(userChannels), 12, 0xFF38BDF8, false);
+            ch.setPadding(0, dp(2), 0, 0);
+            row.addView(ch);
+        }
+
         if (!u.optBoolean("is_admin")) {
             LinearLayout btns = new LinearLayout(this);
             btns.setOrientation(LinearLayout.HORIZONTAL);
             if ("pending".equals(status)) {
                 Button ok = small("✅ Valider", 0xFF22C55E, 0xFF16A34A);
-                ok.setOnClickListener(v -> userAction(id, "approve", "Compte validé : 24 h d'essai"));
+                // l'administrateur coche le ou les canaux dont les prédictions feront sonner le téléphone de ce compte
+                ok.setOnClickListener(v -> pickChannels("Canal(aux) de " + u.optString("email"), userChannels, true,
+                        chosen -> userAction(id, "approve", "Compte validé : 24 h d'essai • " + channelsText(chosen), chosen)));
                 btns.addView(ok, weight());
+            } else {
+                Button cb = small("📡 Canaux", 0xFF0EA5E9, 0xFF2563EB);
+                cb.setOnClickListener(v -> pickChannels("Canal(aux) de " + u.optString("email"), userChannels, false,
+                        chosen -> setChannels(id, chosen)));
+                btns.addView(cb, weight());
             }
             if ("blocked".equals(status)) {
                 Button un = small("🔓 Débloquer", 0xFF3B82F6, 0xFF6366F1);
@@ -267,10 +335,26 @@ public class AdminActivity extends Activity {
     }
 
     private void userAction(final String id, final String action, final String okText) {
+        userAction(id, action, okText, null);
+    }
+
+    private void userAction(final String id, final String action, final String okText, final JSONArray channels) {
         new Thread(() -> {
-            JSONObject r = Server.call(this, "adm_user_status", "p_token", Prefs.token(this), "p_user", id, "p_action", action);
+            JSONObject r = channels == null
+                    ? Server.call(this, "adm_user_status", "p_token", Prefs.token(this), "p_user", id, "p_action", action)
+                    : Server.call(this, "adm_user_status", "p_token", Prefs.token(this), "p_user", id, "p_action", action, "p_channels", channels);
             handler.post(() -> {
                 Toast.makeText(this, r.optBoolean("ok") ? okText : "❌ " + Server.message(r), Toast.LENGTH_SHORT).show();
+                load();
+            });
+        }).start();
+    }
+
+    private void setChannels(final String id, final JSONArray channels) {
+        new Thread(() -> {
+            JSONObject r = Server.call(this, "adm_set_channels", "p_token", Prefs.token(this), "p_user", id, "p_channels", channels);
+            handler.post(() -> {
+                Toast.makeText(this, r.optBoolean("ok") ? "Canaux enregistrés : " + channelsText(channels) : "❌ " + Server.message(r), Toast.LENGTH_LONG).show();
                 load();
             });
         }).start();

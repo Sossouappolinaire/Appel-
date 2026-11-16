@@ -2,6 +2,7 @@ package com.kouame.appelpredictions;
 
 import android.content.Context;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.util.Locale;
@@ -9,6 +10,11 @@ import java.util.Locale;
 /** Appels aux fonctions du serveur (comptes, abonnement, appels, administration). Renvoie toujours un objet JSON avec « ok ». */
 final class Server {
     private Server() { }
+
+    /** Dernier appel au serveur : 1 = a abouti (« Connecté »), -1 = injoignable ou service absent (« Hors ligne »), 0 = pas encore tenté. */
+    static volatile int link = 0;
+    /** Seul l'administrateur voit le détail technique des erreurs ; les utilisateurs voient seulement « Hors ligne ». */
+    static volatile boolean showDetail = false;
 
     /** Exemple : Server.call(ctx, "app_state", "p_token", token). Les erreurs réseau donnent {ok:false, error:"reseau", detail:"…"}. */
     static JSONObject call(Context c, String fn, Object... kv) {
@@ -20,18 +26,26 @@ final class Server {
             JSONObject args = new JSONObject();
             for (int i = 0; i + 1 < kv.length; i += 2) args.put(String.valueOf(kv[i]), kv[i + 1]);
             Api.Result r = Api.rpc(c, fn, args, timeoutMs);
-            if (r.error != null) return fail("reseau", r.error);
-            if (r.code == 401 || r.code == 403) return fail("cle", "Clé refusée (" + r.code + ")");
-            if (r.code == 404) return fail("service", "Service introuvable (la base n'est pas préparée)");
+            if (r.error != null) { link = -1; return fail("reseau", r.error); }
+            if (r.code == 401 || r.code == 403) { link = -1; return fail("cle", "Clé refusée (" + r.code + ")"); }
+            if (r.code == 404) { link = -1; return fail("service", "Service introuvable (la base n'est pas préparée)"); }
             JSONObject o;
             try {
                 o = new JSONObject(r.body);
             } catch (Exception e) {
+                link = -1;
                 String b = r.body.length() > 120 ? r.body.substring(0, 120) : r.body;
                 return fail("reponse", "Réponse inattendue (" + r.code + ") " + b);
             }
+            if (!o.has("ok")) { // erreur PostgREST (pas une réponse de nos fonctions)
+                link = -1;
+                String b = r.body.length() > 120 ? r.body.substring(0, 120) : r.body;
+                return fail("reponse", "Réponse inattendue (" + r.code + ") " + b);
+            }
+            link = 1;
             return o;
         } catch (Exception e) {
+            link = -1;
             return fail("reseau", String.valueOf(e.getMessage()));
         }
     }
@@ -49,6 +63,11 @@ final class Server {
     /** Range l'état du compte (abonnement, rôle) renvoyé par le serveur. */
     static void applyState(Context c, JSONObject o) {
         if (o == null || !o.optBoolean("ok")) return;
+        showDetail = o.optBoolean("is_admin");
+        JSONArray ch = o.optJSONArray("channels");
+        StringBuilder names = new StringBuilder();
+        if (ch != null) for (int i = 0; i < ch.length(); i++) names.append(i > 0 ? "\n" : "").append(ch.optString(i));
+        Prefs.setChannels(c, names.toString());
         Prefs.setAccess(c, o.optBoolean("is_admin"), o.optBoolean("active"), o.optString("status"),
                 o.optLong("access_until_ms", 0), o.optLong("server_now_ms", System.currentTimeMillis()), o.optBoolean("pending_proof"));
     }
@@ -67,7 +86,8 @@ final class Server {
     static String message(JSONObject o) {
         String e = o.optString("error");
         switch (e) {
-            case "reseau": return "Pas de connexion : " + o.optString("detail");
+            case "reseau": case "cle": case "service": case "reponse":
+                return showDetail ? "Hors ligne : " + o.optString("detail") : "Hors ligne : vérifie ta connexion internet.";
             case "identifiants": return "Email ou PIN incorrect.";
             case "verrouille": return "Trop d'essais. Réessaie dans " + Math.max(1, (o.optInt("retry_s", 600) + 59) / 60) + " min.";
             case "email_invalide": return "Email invalide.";
@@ -78,8 +98,8 @@ final class Server {
             case "trop_de_demandes": return "Tu as déjà envoyé plusieurs captures : attends la réponse de l'administrateur.";
             case "statut": return "Ton compte n'est pas encore validé.";
             case "admin": return "Action réservée à l'administrateur.";
+            case "introuvable": return "Compte introuvable.";
             case "soi_meme": return "Tu ne peux pas te bloquer toi-même.";
-            case "cle": case "service": case "reponse": return o.optString("detail");
             default: return "Erreur : " + e + " " + o.optString("detail");
         }
     }

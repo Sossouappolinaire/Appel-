@@ -5,9 +5,9 @@ import android.content.SharedPreferences;
 
 /** Réglages enregistrés sur le téléphone : base Supabase, session du compte, dernier appel traité, état de l'abonnement. */
 final class Prefs {
-    // Base de données (projet tv-kouame). La clé publique ne peut rien lire directement : tout passe par des fonctions sécurisées (compte + abonnement).
-    static final String DEFAULT_URL = "https://hvjgqaxejqnvgvefjhnj.supabase.co";
-    static final String DEFAULT_KEY = "sb_publishable_65fqWs6C2pi_ToCuTxnqZg_V9OyUA3v";
+    // Base de données (projet « site-production-baccara », celle du site). La clé publique ne peut rien lire directement : tout passe par des fonctions sécurisées (compte + abonnement + canaux).
+    static final String DEFAULT_URL = "https://kmvbsntmzjkpwwqgkqhz.supabase.co";
+    static final String DEFAULT_KEY = "sb_publishable_hMKTMYKHMccROZVz5zd_aw_k6JcuSDu";
     // Lien de paiement (bouton « Payer »)
     static final String PAY_URL = "https://new.sebpay.bj/pay/liker-Z20B0F";
 
@@ -21,11 +21,12 @@ final class Prefs {
     }
 
     // ── base ────────────────────────────────────────────────────────────
-    static String url(Context c) { return sp(c).getString("url3", DEFAULT_URL); }
-    static String key(Context c) { return sp(c).getString("key3", DEFAULT_KEY); }
+    // clés « url4 / key4 » : les anciennes installations (url3 / key3, ancien projet) repartent sur la base du site
+    static String url(Context c) { return sp(c).getString("url4", DEFAULT_URL); }
+    static String key(Context c) { return sp(c).getString("key4", DEFAULT_KEY); }
 
     static void setConnection(Context c, String url, String key) {
-        sp(c).edit().putString("url3", url.trim()).putString("key3", key.trim()).putLong("lastId3", -1).apply();
+        sp(c).edit().putString("url4", url.trim()).putString("key4", key.trim()).putLong("lastId3", -1).apply();
     }
 
     // ── session ─────────────────────────────────────────────────────────
@@ -39,8 +40,9 @@ final class Prefs {
 
     /** Déconnexion : le jeton est oublié, l'email reste proposé à la prochaine connexion. */
     static void clearSession(Context c) {
-        sp(c).edit().remove("token").putBoolean("admin", false).putBoolean("active", false).putLong("lastId3", -1).apply();
+        sp(c).edit().remove("token").putBoolean("admin", false).putBoolean("active", false).remove("chans").putLong("lastId3", -1).apply();
         unlocked = false;
+        Server.showDetail = false;
     }
 
     static boolean bio(Context c) { return sp(c).getBoolean("bio", false); }
@@ -57,6 +59,13 @@ final class Prefs {
     static long accessUntil(Context c) { return sp(c).getLong("until", 0); }
     static long serverOffset(Context c) { return sp(c).getLong("offset", 0); }
     static boolean pendingProof(Context c) { return sp(c).getBoolean("proof", false); }
+
+    // ── canaux accordés par l'administrateur (noms seulement, un par ligne) ──
+    static void setChannels(Context c, String joined) { sp(c).edit().putString("chans", joined).apply(); }
+    static String[] channels(Context c) {
+        String s = sp(c).getString("chans", "");
+        return s.isEmpty() ? new String[0] : s.split("\n");
+    }
 
     // ── surveillance ────────────────────────────────────────────────────
     /** Dernier appel déjà traité (-1 = pas encore initialisé : les anciens appels ne sonnent pas). */
