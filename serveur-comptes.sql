@@ -92,7 +92,7 @@ BEGIN
   IF p_token IS NULL OR length(p_token) < 20 THEN RETURN NULL; END IF;
   h := public._app_hash(p_token);
   SELECT au.* INTO u FROM public.app_sessions s JOIN public.app_users au ON au.id = s.user_id
-   WHERE s.token_hash = h AND s.created_at > now() - interval '180 days';
+   WHERE s.token_hash = h AND s.last_seen > now() - interval '180 days';
   IF NOT FOUND THEN RETURN NULL; END IF;
   UPDATE public.app_sessions SET last_seen = now() WHERE token_hash = h AND last_seen < now() - interval '10 minutes';
   RETURN u;
@@ -156,7 +156,7 @@ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE tok text;
 BEGIN
   tok := replace(gen_random_uuid()::text, '-', '') || replace(gen_random_uuid()::text, '-', '');
-  DELETE FROM public.app_sessions WHERE created_at < now() - interval '180 days';
+  DELETE FROM public.app_sessions WHERE last_seen < now() - interval '180 days';
   INSERT INTO public.app_sessions (token_hash, user_id) VALUES (public._app_hash(tok), uid);
   RETURN tok;
 END $$;

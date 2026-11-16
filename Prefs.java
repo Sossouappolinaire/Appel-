@@ -38,9 +38,37 @@ final class Prefs {
         sp(c).edit().putString("token", token).putString("email", email).putBoolean("admin", admin).putLong("lastId3", -1).apply();
     }
 
+    // ── PIN vérifié sur le téléphone (haché, jamais en clair) : permet de rouvrir l'application sans internet tant que la session existe ──
+    private static byte[] pbkdf2(String pin, byte[] salt) throws Exception {
+        javax.crypto.SecretKeyFactory f = javax.crypto.SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256");
+        return f.generateSecret(new javax.crypto.spec.PBEKeySpec(pin.toCharArray(), salt, 60000, 256)).getEncoded();
+    }
+
+    static void setLocalPin(Context c, String email, String pin) {
+        try {
+            byte[] salt = new byte[16];
+            new java.security.SecureRandom().nextBytes(salt);
+            sp(c).edit().putString("pinEmail", email.trim().toLowerCase())
+                    .putString("pinSalt", android.util.Base64.encodeToString(salt, android.util.Base64.NO_WRAP))
+                    .putString("pinHash", android.util.Base64.encodeToString(pbkdf2(pin, salt), android.util.Base64.NO_WRAP)).apply();
+        } catch (Exception ignored) { }
+    }
+
+    static boolean checkLocalPin(Context c, String email, String pin) {
+        try {
+            String h = sp(c).getString("pinHash", "");
+            String s = sp(c).getString("pinSalt", "");
+            if (h.isEmpty() || s.isEmpty() || !email.trim().toLowerCase().equals(sp(c).getString("pinEmail", ""))) return false;
+            byte[] calc = pbkdf2(pin, android.util.Base64.decode(s, android.util.Base64.NO_WRAP));
+            return java.security.MessageDigest.isEqual(calc, android.util.Base64.decode(h, android.util.Base64.NO_WRAP));
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     /** Déconnexion : le jeton est oublié, l'email reste proposé à la prochaine connexion. */
     static void clearSession(Context c) {
-        sp(c).edit().remove("token").putBoolean("admin", false).putBoolean("active", false).remove("chans").putLong("lastId3", -1).apply();
+        sp(c).edit().remove("pinHash").remove("pinSalt").remove("pinEmail").remove("token").putBoolean("admin", false).putBoolean("active", false).remove("chans").putLong("lastId3", -1).apply();
         unlocked = false;
         Server.showDetail = false;
     }

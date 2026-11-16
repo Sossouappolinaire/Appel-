@@ -158,6 +158,13 @@ public class LoginActivity extends Activity {
             setMessage("Les deux PIN ne sont pas identiques.", true);
             return;
         }
+        // session déjà enregistrée sur ce téléphone et PIN correct : on rouvre sans passer par internet
+        if (!registerMode && !Prefs.token(this).isEmpty() && Prefs.checkLocalPin(this, e, p)) {
+            Prefs.unlocked = true;
+            if (canUseFinger()) Prefs.setBio(this, true);
+            finish();
+            return;
+        }
         setBusy(true);
         setMessage("Un instant…", false);
         final boolean register = registerMode;
@@ -170,6 +177,7 @@ public class LoginActivity extends Activity {
                     return;
                 }
                 Prefs.setSession(this, r.optString("token"), e, r.optBoolean("is_admin"));
+                Prefs.setLocalPin(this, e, p);
                 Server.applyState(this, r);
                 Prefs.unlocked = true;
                 if (canUseFinger()) Prefs.setBio(this, true); // l'empreinte sera proposée à la prochaine ouverture
@@ -236,10 +244,17 @@ public class LoginActivity extends Activity {
                 } else if ("session".equals(r.optString("error"))) {
                     setMessage("Session expirée : saisis ton PIN.", true);
                     updateFingerButton();
+                } else if (isNetworkError(r.optString("error"))) {
+                    Prefs.unlocked = true; // empreinte reconnue, session gardée : on ouvre même sans internet
+                    finish();
                 } else {
                     setMessage(Server.message(r), true);
                 }
             });
         }).start();
+    }
+
+    private static boolean isNetworkError(String e) {
+        return "reseau".equals(e) || "cle".equals(e) || "service".equals(e) || "reponse".equals(e);
     }
 }

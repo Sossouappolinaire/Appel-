@@ -97,14 +97,12 @@ public class IncomingCallActivity extends Activity {
             setTurnScreenOn(true);
         } else {
             getWindow().addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
-                    | WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
-                    | WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD);
+                    | WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON);
         }
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         getWindow().setStatusBarColor(0xFF0F172A);
         getWindow().setNavigationBarColor(0xFF312E81);
-        KeyguardManager km = (KeyguardManager) getSystemService(Context.KEYGUARD_SERVICE);
-        if (km != null) km.requestDismissKeyguard(this, null);
+        // pas de demande de déverrouillage : l'écran d'appel s'affiche par-dessus l'écran de verrouillage
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);

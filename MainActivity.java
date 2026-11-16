@@ -714,14 +714,36 @@ public class MainActivity extends Activity {
         refreshStatus();
         askNotifications();
         startForegroundService(new Intent(this, CallService.class));
-        PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
-        if (pm != null && !pm.isIgnoringBatteryOptimizations(getPackageName())) {
-            try {
+        CallService.scheduleWatchdog(this);
+        askMissingPermission();
+    }
+
+    /** Ouvre le premier réglage qui manque pour sonner téléphone verrouillé. Renvoie false si tout est déjà accordé. */
+    private boolean askMissingPermission() {
+        try {
+            PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+            if (pm != null && !pm.isIgnoringBatteryOptimizations(getPackageName())) {
+                Toast.makeText(this, "Autorise « sans restriction » pour que l'appli sonne écran éteint.", Toast.LENGTH_LONG).show();
                 startActivity(new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:" + getPackageName())));
-            } catch (Exception ignored) {
-                // réglage indisponible sur ce téléphone
+                return true;
             }
+            if (Build.VERSION.SDK_INT >= 34) {
+                NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+                if (nm != null && !nm.canUseFullScreenIntent()) {
+                    Toast.makeText(this, "Autorise les notifications plein écran pour l'appel sur l'écran verrouillé.", Toast.LENGTH_LONG).show();
+                    startActivity(new Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT, Uri.parse("package:" + getPackageName())));
+                    return true;
+                }
+            }
+            if (!Settings.canDrawOverlays(this)) {
+                Toast.makeText(this, "Autorise « Afficher par-dessus les autres applis » pour que l'écran d'appel s'ouvre tout seul.", Toast.LENGTH_LONG).show();
+                startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:" + getPackageName())));
+                return true;
+            }
+        } catch (Exception ignored) {
+            // réglage indisponible sur ce téléphone
         }
+        return false;
     }
 
     private void testConnection(final Button button) {
@@ -746,17 +768,8 @@ public class MainActivity extends Activity {
     }
 
     private void openPermissions() {
-        if (Build.VERSION.SDK_INT >= 34) {
-            NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
-            if (nm != null && !nm.canUseFullScreenIntent()) {
-                try {
-                    startActivity(new Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT, Uri.parse("package:" + getPackageName())));
-                    return;
-                } catch (Exception ignored) {
-                    // on continue vers les réglages généraux
-                }
-            }
-        }
+        if (askMissingPermission()) return;
+        Toast.makeText(this, "Tout est autorisé ✅", Toast.LENGTH_SHORT).show();
         startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + getPackageName())));
     }
 

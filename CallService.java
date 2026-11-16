@@ -1,5 +1,6 @@
 package com.kouame.appelpredictions;
 
+import android.app.AlarmManager;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
@@ -14,6 +15,7 @@ import android.media.AudioManager;
 import android.media.MediaPlayer;
 import android.media.RingtoneManager;
 import android.net.Uri;
+import android.net.wifi.WifiManager;
 import android.os.Build;
 import android.os.IBinder;
 import android.os.PowerManager;
@@ -36,6 +38,8 @@ public class CallService extends Service {
     static final String ACTION_ANSWER = "com.kouame.appelpredictions.ANSWER";
     static final String ACTION_DECLINE = "com.kouame.appelpredictions.DECLINE";
     static final String ACTION_TEST = "com.kouame.appelpredictions.TEST";
+    static final String ACTION_WATCHDOG = "com.kouame.appelpredictions.WATCHDOG";
+    private static final long WATCHDOG_MS = 5 * 60 * 1000L;
 
     private static final String CH_SERVICE = "surveillance";
     private static final String CH_CALL = "appel";
@@ -50,6 +54,7 @@ public class CallService extends Service {
     private volatile boolean polling = false;
     private Thread poller;
     private PowerManager.WakeLock wakeLock;
+    private WifiManager.WifiLock wifiLock;
     private MediaPlayer player;
     private int savedVolume = -1;
     private int pendingCalls = 0;
@@ -57,6 +62,33 @@ public class CallService extends Service {
 
     @Override
     public IBinder onBind(Intent intent) { return null; }
+
+    /** Programme (ou reprogramme) le réveil de secours qui relance le service s'il a été arrêté par le système. */
+    static void scheduleWatchdog(Context c) {
+        try {
+            AlarmManager am = (AlarmManager) c.getSystemService(Context.ALARM_SERVICE);
+            if (am == null) return;
+            PendingIntent pi = PendingIntent.getBroadcast(c, 9, new Intent(c, BootReceiver.class).setAction(ACTION_WATCHDOG),
+                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+            am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, System.currentTimeMillis() + WATCHDOG_MS, pi);
+        } catch (Exception ignored) { }
+    }
+
+    static void cancelWatchdog(Context c) {
+        try {
+            AlarmManager am = (AlarmManager) c.getSystemService(Context.ALARM_SERVICE);
+            if (am == null) return;
+            am.cancel(PendingIntent.getBroadcast(c, 9, new Intent(c, BootReceiver.class).setAction(ACTION_WATCHDOG),
+                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE));
+        } catch (Exception ignored) { }
+    }
+
+    @Override
+    public void onTaskRemoved(Intent rootIntent) {
+        // application retirée de la liste des applications récentes : la surveillance continue et se relance si besoin
+        if (Prefs.running(this)) scheduleWatchdog(this);
+        super.onTaskRemoved(rootIntent);
+    }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
@@ -68,11 +100,13 @@ public class CallService extends Service {
         }
         boolean test = ACTION_TEST.equals(act);
         if (!test && !Prefs.running(this)) {
+            cancelWatchdog(this);
             startForegroundCompat("Arrêté");
             stopSelf();
             return START_NOT_STICKY;
         }
         startForegroundCompat(Prefs.status(this));
+        if (Prefs.running(this)) scheduleWatchdog(this);
         if (test) startRinging("🧪 Test de la sonnerie");
         if (Prefs.running(this)) startPolling();
         return START_STICKY;
@@ -116,6 +150,16 @@ public class CallService extends Service {
                 wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "appel:surveillance");
                 wakeLock.acquire();
             }
+        }
+        if (wifiLock == null) { // garde le Wi-Fi actif écran éteint, pour que la lecture de la base continue
+            try {
+                WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+                if (wm != null) {
+                    wifiLock = wm.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "appel:wifi");
+                    wifiLock.setReferenceCounted(false);
+                    wifiLock.acquire();
+                }
+            } catch (Exception ignored) { }
         }
     }
 
@@ -217,6 +261,7 @@ public class CallService extends Service {
         pendingCalls = RINGING ? pendingCalls + 1 : 1;
         CALL_TEXT = pendingCalls > 1 ? text + "\n(+" + (pendingCalls - 1) + " autre(s) prédiction(s))" : text;
         RINGING = true;
+        wakeScreen();
         showCallNotification();
         if (player == null) {
             try {
@@ -248,6 +293,17 @@ public class CallService extends Service {
         } catch (Exception ignored) {
             // sinon : notification plein écran ci-dessous
         }
+    }
+
+    /** Allume l'écran pour l'appel, même téléphone verrouillé. */
+    @SuppressWarnings("deprecation")
+    private void wakeScreen() {
+        try {
+            PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+            if (pm == null) return;
+            PowerManager.WakeLock w = pm.newWakeLock(PowerManager.SCREEN_BRIGHT_WAKE_LOCK | PowerManager.ACQUIRE_CAUSES_WAKEUP | PowerManager.ON_AFTER_RELEASE, "appel:ecran");
+            w.acquire(20000);
+        } catch (Exception ignored) { }
     }
 
     private void showCallNotification() {
@@ -304,6 +360,7 @@ public class CallService extends Service {
         if (poller != null) poller.interrupt();
         stopRinging();
         if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
+        if (wifiLock != null && wifiLock.isHeld()) wifiLock.release();
         super.onDestroy();
     }
 }

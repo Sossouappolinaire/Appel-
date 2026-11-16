@@ -24,3 +24,9 @@ Fichiers : *.java, AndroidManifest.xml, app.gradle, build.gradle, settings.gradl
 ## Version 1.2.1
 - Le message « Hors ligne » distingue maintenant un vrai problème de connexion (« vérifie ta connexion internet ») d'un serveur indisponible (« serveur indisponible, réessaie plus tard (code : …) »).
 - `serveur-comptes.sql` met à niveau automatiquement une base restée en v1.1 (colonne `fails`, statut `approved`, anciennes sessions) ; il reste rejouable sans effet sur une base déjà en v1.2.
+
+## Version 1.3 : sonnerie téléphone verrouillé + sessions gardées
+- L'écran d'appel s'affiche par-dessus l'écran de verrouillage (sans demander de le déverrouiller), l'écran s'allume, la sonnerie joue en boucle.
+- La surveillance garde le processeur et le Wi-Fi actifs écran éteint, se relance toute seule si le système l'arrête (réveil de secours toutes les 5 min, au redémarrage et après une mise à jour).
+- Le bouton « permissions » ouvre, un par un, les réglages qui manquent : batterie « sans restriction », notifications plein écran (Android 14+), « Afficher par-dessus les autres applis ».
+- Session gardée : le PIN est vérifié aussi sur le téléphone (haché), donc l'application se rouvre sans internet ; l'empreinte ouvre aussi hors ligne. Sur le serveur, la session dure 180 jours après la dernière utilisation (et non après la connexion).
